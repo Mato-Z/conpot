@@ -19,6 +19,9 @@
 import MySQLdb
 import gevent
 import logging
+import json
+import re
+import subprocess
 
 from warnings import filterwarnings
 filterwarnings('ignore', category=MySQLdb.Warning)
@@ -59,6 +62,9 @@ class MySQLlogger(object):
             logger.error('Could not create a stable database connection for logging. Check database and credentials.')
 
     def _create_db(self):
+        return True
+        # This is useful only when creating the table, that
+        # seems to cause problems when the table already exists
         cursor = self.conn.cursor()
         cursor.execute(""" SELECT count(*) FROM information_schema.tables WHERE table_name = %s and table_schema=%s""",("events",self.db)) 
         if (cursor.fetchone()[0]) == 0:
@@ -75,29 +81,29 @@ class MySQLlogger(object):
                             ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
                            """)
 
-    def log(self, event, retry=1):
-        cursor = self.conn.cursor()
-
+    def createEvent(self, cursor, event, asnid, retry=1):
         try:
             if len(event["data"].keys()) > 1:
                 cursor.execute("""INSERT INTO
-                                    events (sensorid, session, remote, protocol, request, response)
+                                    events (sensorid, session, remote, protocol, request, response, asnid)
                                   VALUES
-                                    (%s, %s, %s, %s, %s, %s)""", (str(self.sensorid),
+                                    (%s, %s, %s, %s, %s, %s, %s)""", (str(self.sensorid),
                                                                   str(event["id"]),
                                                                   str(event["remote"]),
                                                                   event["data_type"],
                                                                   event["data"].get('request'),
-                                                                  event["data"].get('response')))
+                                                                  event["data"].get('response'),
+                                                                  asnid))
             else:
                 cursor.execute("""INSERT INTO
-                                    events (sensorid, session, remote, protocol,request, response)
+                                    events (sensorid, session, remote, protocol,request, response, asnid)
                                   VALUES
-                                    (%s, %s, %s, %s, %s,"NA")""", (str(self.sensorid),
+                                    (%s, %s, %s, %s, %s,"NA", %s)""", (str(self.sensorid),
                                                                   str(event["id"]),
                                                                   str(event["remote"]),
                                                                   event["data_type"],
-                                                                  event["data"].get('type')))
+                                                                  event["data"].get('type'),
+                                                                  asnid))
             self.conn.commit()
         except (AttributeError, MySQLdb.OperationalError):
             self._connect()
@@ -112,6 +118,55 @@ class MySQLlogger(object):
                 return self.log(event, retry)
 
         return cursor.lastrowid
+
+    def createEventWithASN(self, cursor, event, retry=1):
+        def addslashes(s):
+            l = ["\\", '"', "'", "\0", ]
+            for i in l:
+                if i in s:
+                    s = s.replace(i, '\\'+i)
+            return s
+
+        def reverseIP(address):
+            temp = re.split("\.", address)
+            convertedAddress = str(temp[3]) +'.' + str(temp[2]) + '.' + str(temp[1]) +'.' + str(temp[0])
+            return convertedAddress
+
+        peerIP = event["remote"][0]
+        peerPort = event["remote"][1]
+        querycmd1 = reverseIP(peerIP) + '.origin.asn.cymru.com'
+        response1 = subprocess.Popen(['dig', '-t', 'TXT', querycmd1, '+short'], stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
+        response1List = re.split('\|', response1)
+        ASN = response1List[0].strip('" ')
+        querycmd2 = 'AS' + ASN + '.asn.cymru.com'
+        response2 = subprocess.Popen(['dig', '-t', 'TXT', querycmd2, '+short'], stdout=subprocess.PIPE).communicate()[0].decode('utf-8')
+        response2List = re.split('\|', response2)
+        if len(response2List) < 4:
+            attackid = self.createEvent(cursor, event, 1, retry)
+            logger.info("Invalid AS response, attackid = %i" % (attackid))
+        else:
+            isp = addslashes(response2List[4].replace('"', ''))
+            network = addslashes(response1List[1].strip())
+            country = addslashes(response1List[2].strip())
+            registry = addslashes(response1List[3].strip())
+            isp = network + "-" + isp
+            cursor.execute("""SELECT `asnid` FROM `asinfo` WHERE `asn` = %s AND `rir` = %s AND `country` = %s AND `asname` = %s """, (ASN, registry, country, isp))
+            r = cursor.fetchone()
+            if r:
+                attackid = self.createEvent(cursor, event, int(r[0]), retry)
+                logger.info("Existing AS response (%s,%s,%s,%s), attackid = %i" % (isp, network, country, registry, attackid))
+            else:
+                r = cursor.execute("""INSERT INTO `asinfo` (`asn`, `rir`, `country`, `asname`) VALUES (%s, %s, %s, %s) """, (ASN, registry, country, isp))
+                asnid = cursor.lastrowid
+                attackid = self.createEvent(cursor, event, asnid, retry)
+                logger.info("New AS response (%s,%s,%s,%s), attackid = %i" % (isp, network, country, registry, attackid))
+      
+        return attackid
+
+
+    def log(self, event, retry=1):
+        cursor = self.conn.cursor()
+        return self.createEventWithASN(cursor, event, retry)
 
     def log_session(self, session):
         pass
