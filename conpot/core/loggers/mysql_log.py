@@ -145,10 +145,10 @@ class MySQLlogger(object):
             attackid = self.createEvent(cursor, event, 1, retry)
             logger.info("Invalid AS response, attackid = %i" % (attackid))
         else:
-            isp = addslashes(response2List[4].replace('"', ''))
-            network = addslashes(response1List[1].strip())
-            country = addslashes(response1List[2].strip())
-            registry = addslashes(response1List[3].strip())
+            isp = addslashes(response2List[4].replace('"', '').strip('"\' \n'))
+            network = addslashes(response1List[1].strip('"\' \n'))
+            country = addslashes(response1List[2].strip('"\' \n'))
+            registry = addslashes(response1List[3].strip('"\' \n'))
             isp = network + "-" + isp
             cursor.execute("""SELECT `asnid` FROM `asinfo` WHERE `asn` = %s AND `rir` = %s AND `country` = %s AND `asname` = %s """, (ASN, registry, country, isp))
             r = cursor.fetchone()
