@@ -91,8 +91,8 @@ class MySQLlogger(object):
                                                                   str(event["id"]),
                                                                   str(event["remote"]),
                                                                   event["data_type"],
-                                                                  event["data"].get('request'),
-                                                                  event["data"].get('response'),
+                                                                  str(event["data"].get('request')),
+                                                                  str(event["data"].get('response')),
                                                                   asnid))
             else:
                 cursor.execute("""INSERT INTO
