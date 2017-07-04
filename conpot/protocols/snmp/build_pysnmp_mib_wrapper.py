@@ -20,6 +20,15 @@ import logging
 import os
 import re
 
+from pysmi.reader.localfile import FileReader
+from pysmi.reader.httpclient import HttpReader
+from pysmi.searcher.pyfile import PyFileSearcher
+from pysmi.searcher.pypackage import PyPackageSearcher
+from pysmi.searcher.stub import StubSearcher
+from pysmi.writer.pyfile import PyFileWriter
+from pysmi.parser.smi import SmiV2Parser
+from pysmi.codegen.pysnmp import PySnmpCodeGen, baseMibs
+from pysmi.compiler import MibCompiler
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +40,45 @@ compiled_mibs = []
 # key = mib name, value = full path to the file
 file_map = {}
 
+def mib2pysnmp2(mib_file, output_dir):
+    """
+    The 'build-pysnmp-mib' script we previously used is no longer available
+    Latest pysmi has the ability to generate a .py file from .mib automatically
+
+    :param mib_file: path to the .mib file we want to compile
+    :param output_dir: path to the output directory
+    :return: True if we successfully compile the .mib to a .py
+    """
+
+    logger.debug('Compiling mib file: %s', mib_file)
+
+    # create a mib compiler with output dir
+    mibCompiler = MibCompiler(SmiV2Parser(), PySnmpCodeGen(),
+                              PyFileWriter(output_dir))
+
+    # add sources from where we fetch dependencies
+    mibCompiler.addSources(HttpReader('mibs.snmplabs.com', 80, '/asn1/@mib@'))
+    mibCompiler.addSources(
+        FileReader(os.path.dirname(os.path.abspath(mib_file))))
+
+    # add searchers
+    mibCompiler.addSearchers(PyFileSearcher(output_dir))
+    mibCompiler.addSearchers(PyPackageSearcher('pysnmp.mibs'))
+    mibCompiler.addSearchers(StubSearcher(*baseMibs))
+
+    # compile, there should be a MIBFILE.py generated under output_dir
+    mibName = os.path.basename(mib_file).replace('.mib', '')
+    results = mibCompiler.compile(mibName)
+
+    if results[mibName] == 'compiled' or results[mibName] == 'untouched':
+        return True
+
+    return False
+
 
 def mib2pysnmp(mib_file):
     """
+    Deprecated
     Wraps the 'build-pysnmp-mib' script.
     :param mib_file: Path to the MIB file.
     :return: A string representation of the compiled MIB file (string).
@@ -121,15 +166,11 @@ def compile_mib(mib_name, output_dir):
     :param output_dir: Output directory (string).
     """
     # resolve dependencies recursively
+
     for dependency in mib_dependency_map[mib_name]:
         if dependency not in compiled_mibs and dependency in file_map:
             compile_mib(dependency, output_dir)
-    _compile_mib(mib_name, output_dir)
 
-
-def _compile_mib(mib_name, output_dir):
-    pysnmp_str_obj = mib2pysnmp(file_map[mib_name])
-    output_filename = os.path.basename(os.path.splitext(mib_name)[0]) + '.py'
-    with open(os.path.join(output_dir, output_filename), 'w') as output:
-        output.write(pysnmp_str_obj)
+    result = mib2pysnmp2(file_map[mib_name], output_dir)
+    if result:
         compiled_mibs.append(mib_name)

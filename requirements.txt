@@ -1,5 +1,6 @@
 gevent>=1.0
-pysnmp==4.2.5
+pysnmp==4.3.5
+pysmi==0.1.3
 lxml
 bottle
 jinja2
@@ -19,3 +20,4 @@ cybox
 bacpypes==0.13.8
 pyghmi
 mixbox
+modbus-tk
