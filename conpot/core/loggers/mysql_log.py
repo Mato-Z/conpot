@@ -150,14 +150,40 @@ class MySQLlogger(object):
             country = addslashes(response1List[2].strip('"\' \n'))
             registry = addslashes(response1List[3].strip('"\' \n'))
             isp = network + "-" + isp
-            cursor.execute("""SELECT `asnid` FROM `asinfo` WHERE `asn` = %s AND `rir` = %s AND `country` = %s AND `asname` = %s """, (ASN, registry, country, isp))
-            r = cursor.fetchone()
+            try:
+                cursor.execute("""SELECT `asnid` FROM `asinfo` WHERE `asn` = %s AND `rir` = %s AND `country` = %s AND `asname` = %s """, (ASN, registry, country, isp))
+                r = cursor.fetchone()
+            except (AttributeError, MySQLdb.OperationalError):
+                self._connect()
+
+                if retry == 0:
+                    logger.error('Logging failed. Database connection not available.')
+                    return False
+                else:
+                    logger.debug('Logging failed: Database connection lost. Retrying (%s tries left)...', retry)
+                    retry -= 1
+                    gevent.sleep(float(0.5))
+                    return self.log(event, retry)
+
             if r:
                 attackid = self.createEvent(cursor, event, int(r[0]), retry)
                 logger.info("Existing AS response (%s,%s,%s,%s), attackid = %i" % (isp, network, country, registry, attackid))
             else:
-                r = cursor.execute("""INSERT INTO `asinfo` (`asn`, `rir`, `country`, `asname`) VALUES (%s, %s, %s, %s) """, (ASN, registry, country, isp))
-                asnid = cursor.lastrowid
+                try:
+                    r = cursor.execute("""INSERT INTO `asinfo` (`asn`, `rir`, `country`, `asname`) VALUES (%s, %s, %s, %s) """, (ASN, registry, country, isp))
+                    asnid = cursor.lastrowid
+                except ((AttributeError, MySQLdb.OperationalError):
+                    self._connect()
+
+                    if retry == 0:
+                        logger.error('Logging failed. Database connection not available.')
+                        return False
+                    else:
+                        logger.debug('Logging failed: Database connection lost. Retrying (%s tries left)...', retry)
+                        retry -= 1
+                        gevent.sleep(float(0.5))
+                        return self.log(event, retry)
+
                 attackid = self.createEvent(cursor, event, asnid, retry)
                 logger.info("New AS response (%s,%s,%s,%s), attackid = %i" % (isp, network, country, registry, attackid))
       
