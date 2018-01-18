@@ -172,7 +172,7 @@ class MySQLlogger(object):
                 try:
                     r = cursor.execute("""INSERT INTO `asinfo` (`asn`, `rir`, `country`, `asname`) VALUES (%s, %s, %s, %s) """, (ASN, registry, country, isp))
                     asnid = cursor.lastrowid
-                except ((AttributeError, MySQLdb.OperationalError):
+                except ((AttributeError, MySQLdb.OperationalError)):
                     self._connect()
 
                     if retry == 0:
