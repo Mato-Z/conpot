@@ -112,10 +112,10 @@ class CommandResponder(object):
         snmpContext = context.SnmpContext(self.snmpEngine)
 
         # Register SNMP Applications at the SNMP engine for particular SNMP context
-        self.resp_app_get = conpot_cmdrsp.c_GetCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator)
-        self.resp_app_set = conpot_cmdrsp.c_SetCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator)
-        self.resp_app_next = conpot_cmdrsp.c_NextCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator)
-        self.resp_app_bulk = conpot_cmdrsp.c_BulkCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator)
+        self.resp_app_get = conpot_cmdrsp.c_GetCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator, host, port)
+        self.resp_app_set = conpot_cmdrsp.c_SetCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator, host, port)
+        self.resp_app_next = conpot_cmdrsp.c_NextCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator, host, port)
+        self.resp_app_bulk = conpot_cmdrsp.c_BulkCommandResponder(self.snmpEngine, snmpContext, self.databus_mediator, host, port)
 
     def addSocketTransport(self, snmpEngine, transportDomain, transport):
         """Add transport object to socket dispatcher of snmpEngine"""
@@ -160,5 +160,5 @@ class CommandResponder(object):
 
 if __name__ == "__main__":
     server = CommandResponder()
-    print 'Starting echo server on port 161'
+    print('Starting echo server on port 161')
     server.serve_forever()

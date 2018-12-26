@@ -24,14 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 # one instance per connection
+
 class AttackSession(object):
-    def __init__(self, protocol, source_ip, source_port, databus, log_queue):
+    def __init__(self, protocol, source_ip, source_port, destination_ip, destination_port, databus, log_queue):
         self.log_queue = log_queue
         self.id = uuid.uuid4()
         logger.info('New %s session from %s (%s)', protocol, source_ip, self.id)
         self.protocol = protocol
         self.source_ip = source_ip
         self.source_port = source_port
+        self.destination_ip = destination_ip
+        self.destination_port = destination_port
         self.timestamp = datetime.utcnow()
         self.databus = databus
         self.public_ip = None
@@ -42,6 +45,11 @@ class AttackSession(object):
         data = {
             "id": self.id,
             "remote": (self.source_ip, self.source_port),
+            "src_ip": self.source_ip,
+            "src_port": self.source_port,
+            "local": (self.destination_ip, self.destination_port),
+            "dst_ip": self.destination_ip,
+            "dst_port": self.destination_port,
             "data_type": self.protocol,
             "timestamp": self.timestamp,
             "public_ip": self.public_ip,
@@ -62,6 +70,11 @@ class AttackSession(object):
         data = {
             "id": self.id,
             "remote": (self.source_ip, self.source_port),
+            "src_ip": self.source_ip,
+            "src_port": self.source_port,
+            "local": (self.destination_ip, self.destination_port),
+            "dst_ip": self.destination_ip,
+            "dst_port": self.destination_port,
             "data_type": self.protocol,
             "timestamp": self.timestamp,
             "public_ip": self.public_ip,

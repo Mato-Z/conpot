@@ -14,9 +14,6 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
-
-import MySQLdb
 import gevent
 import logging
 import json
@@ -83,7 +80,7 @@ class MySQLlogger(object):
 
     def createEvent(self, cursor, event, asnid, retry=1):
         try:
-            if len(event["data"].keys()) > 1:
+            if len(list(event["data"].keys())) > 1:
                 cursor.execute("""INSERT INTO
                                     events (sensorid, session, remote, protocol, request, response, asnid)
                                   VALUES
@@ -200,7 +197,7 @@ class MySQLlogger(object):
     def select_data(self):
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM events")
-        print cursor.fetchall()
+        print((cursor.fetchall()))
 
     def select_session_data(self, sessionid):
         cursor = self.conn.cursor()

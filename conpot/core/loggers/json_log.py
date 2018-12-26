@@ -17,7 +17,7 @@
 
 
 import json
-from helpers import json_default
+from .helpers import json_default
 
 
 class JsonLogger(object):
@@ -28,13 +28,20 @@ class JsonLogger(object):
         self.public_ip = public_ip
 
     def log(self, event):
+        
+        if self.public_ip is not None:
+            dst_ip = self.public_ip
+        else:
+            dst_ip = None
         data = {
             'timestamp': event['timestamp'].isoformat(),
             'sensorid': self.sensorid,
             'id': event["id"],
             'src_ip': event["remote"][0],
             'src_port': event["remote"][1],
-            'dst_ip': self.public_ip,
+            'dst_ip': event["local"][0],
+            'dst_port': event["local"][1],
+            'public_ip': dst_ip,
             'data_type': event["data_type"],
             'request': event["data"].get('request'),
             'response': event["data"].get('response'),

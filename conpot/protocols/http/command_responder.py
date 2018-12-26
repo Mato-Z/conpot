@@ -21,26 +21,27 @@ import random
 
 from datetime import datetime
 
-from HTMLParser import HTMLParser
-from SocketServer import ThreadingMixIn
+from html.parser import HTMLParser
+from socketserver import ThreadingMixIn
 
-import BaseHTTPServer
-import httplib
+import http.server
+import http.client
 import os
 from lxml import etree
-
+from lxml.etree import XPathEvalError
+from conpot.helpers import str_to_bytes
 import conpot.core as conpot_core
 import gevent
 
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
-class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
+class HTTPServer(http.server.BaseHTTPRequestHandler):
 
     def log(self, version, request_type, addr, request, response=None):
 
-        session = conpot_core.get_session('http', addr[0], addr[1])
+        session = conpot_core.get_session('http', addr[0], addr[1], self.connection._sock.getsockname()[0], self.connection._sock.getsockname()[1])
 
         log_dict = {'remote': addr,
                     'timestamp': datetime.utcnow(),
@@ -156,8 +157,8 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
                 message = ''
 
         if self.request_version != 'HTTP/0.9':
-            self.wfile.write("%s %d %s\r\n" %
-                             (self.protocol_version, code, message))
+            msg = str_to_bytes("{} {} {}\r\n".format(self.protocol_version, code, message))
+            self.wfile.write(msg)
 
         # the following two headers are omitted, which is why we override
         # send_response() at all. We do this one on our own...
@@ -226,11 +227,13 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
             # retrieve payload directly from filesystem, if possible.
             # If this is not possible, return an empty, zero sized string.
             try:
-                with open(os.path.join(docpath, 'statuscodes', str(status) + '.status'), 'rb') as f:
+                if not isinstance(status, int):
+                    status = status.value
+                with open(os.path.join(docpath, 'statuscodes', str(int(status)) + '.status'), 'rb') as f:
                     payload = f.read()
 
-            except IOError, e:
-                logger.error('%s', e)
+            except IOError as e:
+                logger.exception('%s', e)
                 payload = ''
 
             # there might be template data that can be substituted within the
@@ -275,8 +278,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
                 requestheaders['Host'] = target
                 requestheaders['Connection'] = 'close'
 
-                remotestatus = 0
-                conn = httplib.HTTPConnection(target)
+                conn = http.client.HTTPConnection(target)
                 conn.request(method, requeststring, body, dict(requestheaders))
                 response = conn.getresponse()
 
@@ -450,7 +452,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
             trailers = []
 
             try:
-                conn = httplib.HTTPConnection(target)
+                conn = http.client.HTTPConnection(target)
                 conn.request("GET", requeststring)
                 response = conn.getresponse()
 
@@ -515,7 +517,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         if not hasattr(self, 'headers'):
             self.headers = self.MessageClass(self.rfile, 0)
 
-        trace_data_length = self.headers.getheader('content-length')
+        trace_data_length = self.headers.get('content-length')
         unsupported_request_data = None
 
         if trace_data_length:
@@ -551,6 +553,8 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         # decide upon sending content as a whole or chunked
         if chunks == '0':
             # send payload as a whole to the client
+            if type(payload) != bytes:
+                payload = payload.encode()
             self.wfile.write(payload)
         else:
             # send payload in chunks to the client
@@ -558,7 +562,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
 
         # loggers
         self.log(self.request_version, self.command, self.client_address, (self.path,
-                                                                           self.headers.headers,
+                                                                           self.headers._headers,
                                                                            unsupported_request_data), status)
 
     def do_TRACE(self):
@@ -575,7 +579,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         #   an attacker could though use the body to inject data if not flushed correctly,
         #   which is done by accessing the data like we do now - just to be secure.. )
 
-        trace_data_length = self.headers.getheader('content-length')
+        trace_data_length = self.headers.get('content-length')
         trace_data = None
 
         if trace_data_length:
@@ -614,20 +618,22 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         self.end_headers()
 
         # send payload (the actual content) to client
+        if type(payload) != bytes:
+            payload = payload.encode()
         self.wfile.write(payload)
 
         # loggers
         self.log(self.request_version,
                  self.command,
                  self.client_address,
-                 (self.path, self.headers.headers, trace_data),
+                 (self.path, self.headers._headers, trace_data),
                  status)
 
     def do_HEAD(self):
         """Handle HEAD requests."""
 
         # fetch configuration dependent variables from server instance
-        headers = []
+        headers = list()
         headers.extend(self.server.global_headers)
         configuration = self.server.configuration
         docpath = self.server.docpath
@@ -637,7 +643,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         #   an attacker could though use the body to inject data if not flushed correctly,
         #   which is done by accessing the data like we do now - just to be secure.. )
 
-        head_data_length = self.headers.getheader('content-length')
+        head_data_length = self.headers.get('content-length')
         head_data = None
 
         if head_data_length:
@@ -657,11 +663,16 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
 
         else:
 
-            # try to find a configuration item for this GET request
-            entity_xml = configuration.xpath(
-                '//http/htdocs/node[@name="'
-                + self.path.partition('?')[0].decode('utf8') + '"]'
-            )
+            # try to find a configuration item for this HEAD request
+            try:
+                entity_xml = configuration.xpath(
+                    '//http/htdocs/node[@name="'
+                    + self.path.partition('?')[0] + '"]'
+                )
+            except XPathEvalError:
+                entity_xml = None
+                logger.debug('Malformed HTTP:HEAD URN. Failed to handle <{}>. (Client: {})'.format(self.path,
+                                                                                                   self.client_address))
 
             if entity_xml:
                 # A config item exists for this entity. Handle it..
@@ -693,7 +704,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         self.log(self.request_version,
                  self.command,
                  self.client_address,
-                 (self.path, self.headers.headers, head_data),
+                 (self.path, self.headers._headers, head_data),
                  status)
 
     def do_OPTIONS(self):
@@ -706,11 +717,11 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         docpath = self.server.docpath
 
         # retrieve OPTIONS body data
-        # ( sticking to the HTTP protocol, there should not be any body in HEAD requests,
+        # ( sticking to the HTTP protocol, there should not be any body in OPTIONS requests,
         #   an attacker could though use the body to inject data if not flushed correctly,
         #   which is done by accessing the data like we do now - just to be secure.. )
 
-        options_data_length = self.headers.getheader('content-length')
+        options_data_length = self.headers.get('content-length')
         options_data = None
 
         if options_data_length:
@@ -769,7 +780,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         self.log(self.request_version,
                  self.command,
                  self.client_address,
-                 (self.path, self.headers.headers, options_data),
+                 (self.path, self.headers._headers, options_data),
                  status)
 
     def do_GET(self):
@@ -786,16 +797,21 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         #   an attacker could though use the body to inject data if not flushed correctly,
         #   which is done by accessing the data like we do now - just to be secure.. )
 
-        get_data_length = self.headers.getheader('content-length')
+        get_data_length = self.headers.get('content-length')
         get_data = None
 
         if get_data_length:
             get_data = self.rfile.read(int(get_data_length))
 
         # try to find a configuration item for this GET request
-        entity_xml = configuration.xpath(
-            '//http/htdocs/node[@name="' + self.path.partition('?')[0].decode('utf8') + '"]'
-        )
+        try:
+            entity_xml = configuration.xpath(
+                '//http/htdocs/node[@name="' + self.path.partition('?')[0] + '"]'
+            )
+        except XPathEvalError:
+            entity_xml = None
+            logger.debug('Malformed HTTP:GET URN. Failed to handle <{}>. (Client: {})'.format(self.path,
+                                                                                              self.client_address))
 
         if entity_xml:
             # A config item exists for this entity. Handle it..
@@ -827,7 +843,7 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         # decide upon sending content as a whole or chunked
         if chunks == '0':
             # send payload as a whole to the client
-            self.wfile.write(payload)
+            self.wfile.write(str_to_bytes(payload))
         else:
             # send payload in chunks to the client
             self.send_chunked(chunks, payload, trailers)
@@ -836,29 +852,34 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         self.log(self.request_version,
                  self.command,
                  self.client_address,
-                 (self.path, self.headers.headers, get_data),
+                 (self.path, self.headers._headers, get_data),
                  status)
 
     def do_POST(self):
         """Handle POST requests"""
 
         # fetch configuration dependent variables from server instance
-        headers = []
+        headers = list()
         headers.extend(self.server.global_headers)
         configuration = self.server.configuration
         docpath = self.server.docpath
 
         # retrieve POST data ( important to flush request buffers )
-        post_data_length = self.headers.getheader('content-length')
+        post_data_length = self.headers.get('content-length')
         post_data = None
 
         if post_data_length:
             post_data = self.rfile.read(int(post_data_length))
 
         # try to find a configuration item for this POST request
-        entity_xml = configuration.xpath(
-            '//http/htdocs/node[@name="' + self.path.partition('?')[0].decode('utf8') + '"]'
-        )
+        try:
+            entity_xml = configuration.xpath(
+                '//http/htdocs/node[@name="' + self.path.partition('?')[0] + '"]'
+            )
+        except XPathEvalError:
+            entity_xml = None
+            logger.debug('Malformed HTTP:POST URN. Failed to handle <{}>. (Client: {})'.format(self.path,
+                                                                                               self.client_address))
 
         if entity_xml:
             # A config item exists for this entity. Handle it..
@@ -891,6 +912,8 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         # decide upon sending content as a whole or chunked
         if chunks == '0':
             # send payload as a whole to the client
+            if type(payload) != bytes:
+                payload = payload.encode()
             self.wfile.write(payload)
         else:
             # send payload in chunks to the client
@@ -900,16 +923,19 @@ class HTTPServer(BaseHTTPServer.BaseHTTPRequestHandler):
         self.log(self.request_version,
                  self.command,
                  self.client_address,
-                 (self.path, self.headers.headers, post_data),
+                 (self.path, self.headers._headers, post_data),
                  status)
 
 
 class TemplateParser(HTMLParser):
     def __init__(self, data):
         self.databus = conpot_core.get_databus()
+        if type(data) == bytes:
+            data = data.decode()
+        self.data = data
         HTMLParser.__init__(self)
-        self.payload = data
-        self.feed(data)
+        self.payload = self.data
+        self.feed(self.data)
 
     def handle_startendtag(self, tag, attrs):
         """ handles template tags provided in XHTML notation.
@@ -964,16 +990,17 @@ class TemplateParser(HTMLParser):
                     self.payload = self.payload.replace(origin, result)
 
 
-class ThreadedHTTPServer(ThreadingMixIn, BaseHTTPServer.HTTPServer):
+class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     """Handle requests in a separate thread."""
 
 
 class SubHTTPServer(ThreadedHTTPServer):
     """this class is necessary to allow passing custom request handler into
        the RequestHandlerClass"""
+    daemon_threads = True
 
     def __init__(self, server_address, RequestHandlerClass, template, docpath):
-        BaseHTTPServer.HTTPServer.__init__(self, server_address, RequestHandlerClass)
+        http.server.HTTPServer.__init__(self, server_address, RequestHandlerClass)
 
         self.docpath = docpath
 
